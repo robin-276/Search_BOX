@@ -1,0 +1,511 @@
+"use client";
+
+import { useState, useEffect, useMemo, useRef } from "react";
+import { createClient } from "@/utils/supabase/client";
+
+// Import your other pages from the same folder
+import CategoryPage from "./Category";
+import TagsPage from "./tags";
+import ResourcesPage from "./resources";
+import ProfilePage from "./profile"; 
+
+import { 
+  Search, ExternalLink, Star, LayoutDashboard, 
+  Tags as TagsIcon, Folder, Database, Globe,
+  Menu, X, User
+} from "lucide-react";
+
+// --- Types ---
+type Category = { id: string; name: string };
+type Tag = { id: string; name: string };
+type Resource = {
+  id: string;
+  title: string;
+  description: string | null;
+  url: string | null;
+  logo: string | null;
+  category_id: string | null;
+  created_at: string;
+  favorite: boolean;
+};
+type MappedResource = Resource & {
+  category_name: string;
+  tags: Tag[];
+};
+
+export default function HomeDashboard() {
+  const supabase = createClient();
+
+  // --- State: Navigation (SPA) & Sidebar ---
+  const [currentView, setCurrentView] = useState("dashboard");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Controls 3-bar menu
+
+  // --- State: Data & User ---
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [resources, setResources] = useState<MappedResource[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // --- State: Search & Filters ---
+  const [mainSearch, setMainSearch] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [tagSearch, setTagSearch] = useState("");
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set());
+
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  // --- Screen Size Listener for Sidebar ---
+  useEffect(() => {
+    // Automatically open sidebar on desktop, close on mobile
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setIsSidebarOpen(false);
+      } else {
+        setIsSidebarOpen(true);
+      }
+    };
+    
+    handleResize(); // Check immediately on load
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // --- Initial Data Fetch ---
+  useEffect(() => {
+    fetchAllData();
+    fetchUser();
+    
+    // Close suggestions when clicking outside
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const fetchUser = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      setUserEmail(user.email ?? "User");
+    }
+  };
+
+  const fetchAllData = async () => {
+    setIsLoading(true);
+
+    const [resData, catData, tagData, resTagsData] = await Promise.all([
+      supabase.from("resources").select("*").order("created_at", { ascending: false }),
+      supabase.from("categories").select("*"),
+      supabase.from("tags").select("*"),
+      supabase.from("resource_tags").select("*")
+    ]);
+
+    const fetchedCategories = catData.data || [];
+    const fetchedTags = tagData.data || [];
+    const fetchedResTags = resTagsData.data || [];
+    
+    setCategories(fetchedCategories);
+    setAllTags(fetchedTags);
+
+    if (resData.data) {
+      const mapped: MappedResource[] = resData.data.map((res: Resource) => {
+        const cat = fetchedCategories.find(c => c.id === res.category_id);
+        const tagIdsForRes = fetchedResTags
+          .filter(rt => rt.resource_id === res.id)
+          .map(rt => rt.tag_id);
+        const tagsForRes = fetchedTags.filter(t => tagIdsForRes.includes(t.id));
+
+        return {
+          ...res,
+          category_name: cat ? cat.name : "Uncategorized",
+          tags: tagsForRes,
+          favorite: res.favorite || false 
+        };
+      });
+      setResources(mapped);
+    }
+    setIsLoading(false);
+  };
+
+  // --- Handlers ---
+  const toggleFavorite = async (id: string, currentStatus: boolean) => {
+    const newStatus = !currentStatus;
+    
+    // Optimistic UI Update (feels instant to the user)
+    setResources(prev => prev.map(r => r.id === id ? { ...r, favorite: newStatus } : r));
+    
+    // Database Update
+    const { error } = await supabase.from("resources").update({ favorite: newStatus }).eq("id", id);
+    
+    if (error) {
+      alert(`Failed to save favorite: Make sure the "favorite" column exists in Supabase. Error: ${error.message}`);
+      // Revert UI if database failed
+      setResources(prev => prev.map(r => r.id === id ? { ...r, favorite: currentStatus } : r));
+    }
+  };
+
+  const toggleTagSelection = (tagId: string) => {
+    setSelectedTagIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(tagId)) newSet.delete(tagId);
+      else newSet.add(tagId);
+      return newSet;
+    });
+  };
+
+  // --- Filtering & Compute Logic ---
+  const suggestions = useMemo(() => {
+    if (mainSearch.length < 2) return [];
+    const lowerQuery = mainSearch.toLowerCase();
+    
+    const possibleMatches = new Set<string>();
+    resources.forEach(r => {
+      if (r.title.toLowerCase().includes(lowerQuery)) possibleMatches.add(r.title);
+      r.tags.forEach(t => {
+        if (t.name.toLowerCase().includes(lowerQuery)) possibleMatches.add(`#${t.name}`);
+      });
+    });
+    return Array.from(possibleMatches).slice(0, 5);
+  }, [mainSearch, resources]);
+
+  const visibleTags = useMemo(() => {
+    if (!tagSearch.trim()) return allTags;
+    return allTags.filter(t => t.name.toLowerCase().includes(tagSearch.toLowerCase()));
+  }, [tagSearch, allTags]);
+
+  const filteredResources = useMemo(() => {
+    return resources.filter(res => {
+      const searchMatch = !mainSearch || 
+        res.title.toLowerCase().includes(mainSearch.toLowerCase()) ||
+        (res.description && res.description.toLowerCase().includes(mainSearch.toLowerCase())) ||
+        res.tags.some(t => t.name.toLowerCase().includes(mainSearch.toLowerCase().replace("#", "")));
+
+      const categoryMatch = selectedCategory === "all" || res.category_id === selectedCategory;
+
+      const selectedTagsArray = Array.from(selectedTagIds);
+      const tagsMatch = selectedTagsArray.length === 0 || 
+        selectedTagsArray.every(tagId => res.tags.some(t => t.id === tagId));
+
+      return searchMatch && categoryMatch && tagsMatch;
+    });
+  }, [resources, mainSearch, selectedCategory, selectedTagIds]);
+
+  const favoriteResources = filteredResources.filter(r => r.favorite);
+  const recentResources = filteredResources.filter(r => !r.favorite);
+
+  // --- UI Components ---
+  const ResourceCard = ({ res }: { res: MappedResource }) => (
+    <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-[#2570FA] transition-colors shadow-sm hover:shadow-md group">
+      
+      {/* Logo Area */}
+      <div className="w-12 h-12 rounded-lg bg-gray-100 flex-shrink-0 flex items-center justify-center overflow-hidden border border-gray-200">
+        {res.logo ? (
+          <img src={res.logo} alt={res.title} className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+        ) : (
+          <Globe className="w-6 h-6 text-gray-400" />
+        )}
+      </div>
+
+      {/* Content Area */}
+      <div className="flex-1 min-w-0">
+        <h3 className="text-lg font-bold text-black truncate">{res.title}</h3>
+        <p className="text-sm text-gray-600 truncate mt-0.5">{res.description || res.url || "No description"}</p>
+        
+        {/* Tags */}
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {res.tags.map(t => (
+             <span key={t.id} className="text-[10px] px-2 py-0.5 bg-[#2570FA]/10 text-[#2570FA] font-medium rounded-full border border-[#2570FA]/20">
+               #{t.name}
+             </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-col sm:flex-row items-center gap-2 pl-2">
+        <button 
+          onClick={() => toggleFavorite(res.id, res.favorite)}
+          className={`p-2 rounded-lg transition-colors ${res.favorite ? 'bg-amber-100 text-amber-500 hover:bg-amber-200' : 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700'}`}
+          title={res.favorite ? "Remove from Favorites" : "Add to Favorites"}
+        >
+          <Star className={`w-5 h-5 ${res.favorite ? 'fill-current' : ''}`} />
+        </button>
+        
+        {res.url ? (
+          <a 
+            href={res.url} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-4 py-2 bg-[#2570FA] hover:bg-blue-700 text-white font-medium rounded-lg shadow-sm transition-all"
+          >
+            Go <ExternalLink className="w-4 h-4" />
+          </a>
+        ) : (
+          <button disabled className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-400 font-medium rounded-lg cursor-not-allowed">
+            No URL
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen bg-[#FFFFFF] text-black overflow-hidden font-sans">
+      
+      {/* MOBILE OVERLAY */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* 1. LEFT SIDEBAR (Primary: #2570FA, Text: White) */}
+      <aside className={`
+        fixed lg:relative inset-y-0 left-0 z-50 
+        w-64 bg-[#2570FA] text-white flex flex-col 
+        transition-all duration-300 ease-in-out
+        ${isSidebarOpen ? "translate-x-0 ml-0" : "-translate-x-full lg:-ml-64"}
+      `}>
+        <div className="p-6 flex justify-between items-center">
+          <h2 className="text-2xl font-black tracking-tight flex items-center gap-2">
+            Search<span className="text-black">BOX</span>
+          </h2>
+          
+          <button className="lg:hidden text-white hover:text-blue-200" onClick={() => setIsSidebarOpen(false)}>
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+        
+        <nav className="flex-1 px-4 space-y-2 overflow-y-auto">
+          <button 
+            onClick={() => { setCurrentView("dashboard"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${
+              currentView === "dashboard" ? "bg-white text-[#2570FA] shadow-md" : "text-white hover:bg-white/10"
+            }`}
+          >
+            <LayoutDashboard className="w-5 h-5" /> Dashboard
+          </button>
+          
+          <button 
+            onClick={() => { setCurrentView("resources"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${
+              currentView === "resources" ? "bg-white text-[#2570FA] shadow-md" : "text-white hover:bg-white/10"
+            }`}
+          >
+            <Database className="w-5 h-5" /> Resources
+          </button>
+          
+          <button 
+            onClick={() => { setCurrentView("categories"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${
+              currentView === "categories" ? "bg-white text-[#2570FA] shadow-md" : "text-white hover:bg-white/10"
+            }`}
+          >
+            <Folder className="w-5 h-5" /> Categories
+          </button>
+          
+          <button 
+            onClick={() => { setCurrentView("tags"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${
+              currentView === "tags" ? "bg-white text-[#2570FA] shadow-md" : "text-white hover:bg-white/10"
+            }`}
+          >
+            <TagsIcon className="w-5 h-5" /> Tags
+          </button>
+        </nav>
+
+        {/* Profile Button Bottom Left */}
+        <div className="p-4 border-t border-white/20">
+          <button 
+            onClick={() => { setCurrentView("profile"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
+              currentView === "profile" ? "bg-white text-[#2570FA] shadow-md" : "text-white hover:bg-white/10"
+            }`}
+          >
+            <div className={`p-2 rounded-full ${currentView === "profile" ? "bg-blue-100" : "bg-white/20"}`}>
+              <User className="w-5 h-5" />
+            </div>
+            <div className="text-left overflow-hidden">
+              <p className="text-sm font-bold">My Profile</p>
+              <p className={`text-xs truncate ${currentView === "profile" ? "text-blue-600" : "text-blue-200"}`}>
+                {userEmail || "Loading..."}
+              </p>
+            </div>
+          </button>
+        </div>
+      </aside>
+
+      {/* 2. MAIN DASHBOARD CONTENT */}
+      <main className="flex-1 flex flex-col h-full overflow-y-auto bg-gray-50">
+        
+        {/* TOP BAR WITH 3-BAR BUTTON */}
+        <div className="flex items-center bg-white border-b border-gray-200 text-black p-4 shadow-sm">
+          <button 
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+            className="p-2 mr-4 bg-gray-100 hover:bg-gray-200 text-black rounded-lg transition-colors"
+          >
+            <Menu className="w-6 h-6" />
+          </button>
+          <h1 className="text-xl font-bold capitalize">{currentView}</h1>
+        </div>
+
+        <div className="p-6 md:p-8 max-w-7xl mx-auto w-full space-y-8">
+
+          {/* Conditional Rendering of Views */}
+          {currentView === "categories" && <CategoryPage />}
+          {currentView === "tags" && <TagsPage />}
+          {currentView === "resources" && <ResourcesPage />}
+          {currentView === "profile" && <ProfilePage />} 
+
+          {/* DASHBOARD VIEW CONTENT */}
+          {currentView === "dashboard" && (
+            <div className="space-y-8">
+              {/* --- SEARCH & FILTER CONTROLS --- */}
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-4 shadow-sm">
+                
+                <div className="flex flex-col md:flex-row gap-4">
+                  {/* SEARCH BAR 1: Main Advanced Search */}
+                  <div className="relative flex-1" ref={searchRef}>
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                      <Search className="h-5 w-5 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search titles, descriptions, tags..."
+                      value={mainSearch}
+                      onChange={(e) => {
+                        setMainSearch(e.target.value);
+                        setShowSuggestions(true);
+                      }}
+                      onFocus={() => setShowSuggestions(true)}
+                      className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#2570FA] focus:border-transparent text-black outline-none transition-all"
+                    />
+                    
+                    {/* Auto-suggestions Dropdown */}
+                    {showSuggestions && suggestions.length > 0 && (
+                      <ul className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+                        {suggestions.map((suggestion, idx) => (
+                          <li 
+                            key={idx} 
+                            onClick={() => {
+                              setMainSearch(suggestion);
+                              setShowSuggestions(false);
+                            }}
+                            className="px-4 py-3 hover:bg-[#2570FA] hover:text-white cursor-pointer text-gray-700 transition-colors font-medium border-b border-gray-100 last:border-0"
+                          >
+                            {suggestion}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {/* SEARCH BAR 2: Category Dropdown */}
+                  <div className="w-full md:w-64">
+                    <select
+                      value={selectedCategory}
+                      onChange={(e) => setSelectedCategory(e.target.value)}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#2570FA] focus:border-transparent text-black outline-none appearance-none font-medium cursor-pointer"
+                    >
+                      <option value="all">All Categories</option>
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* SEARCH BAR 3: Tag Filtering Area */}
+                <div className="pt-4 border-t border-gray-100">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <input
+                      type="text"
+                      placeholder="Filter specific tags..."
+                      value={tagSearch}
+                      onChange={(e) => setTagSearch(e.target.value)}
+                      className="w-full sm:w-64 px-4 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-black outline-none focus:ring-2 focus:ring-[#2570FA]"
+                    />
+                    
+                    {/* Scrollable Tick-Box Area for Tags */}
+                    <div className="flex-1 flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300">
+                      {visibleTags.length === 0 ? (
+                        <span className="text-gray-500 text-sm py-2">No tags found.</span>
+                      ) : (
+                        visibleTags.map(tag => {
+                          const isSelected = selectedTagIds.has(tag.id);
+                          return (
+                            <button
+                              key={tag.id}
+                              onClick={() => toggleTagSelection(tag.id)}
+                              className={`flex-shrink-0 px-4 py-1.5 rounded-lg text-sm font-medium transition-all border shadow-sm ${
+                                isSelected 
+                                  ? 'bg-[#2570FA] text-white border-[#2570FA]' 
+                                  : 'bg-white text-gray-700 border-gray-300 hover:border-[#2570FA]'
+                              }`}
+                            >
+                              {isSelected ? '✓ ' : '+ '}{tag.name}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* --- RESULTS DISPLAY --- */}
+              {isLoading ? (
+                <div className="text-center text-gray-500 py-12 font-medium">Loading your library...</div>
+              ) : (
+                <div className="space-y-10 pb-12">
+                  
+                  {/* Favorites Section */}
+                  {favoriteResources.length > 0 && (
+                    <section>
+                      <h2 className="text-xl font-bold text-amber-500 flex items-center gap-2 mb-4">
+                        <Star className="w-6 h-6 fill-current" /> Favorites
+                      </h2>
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        {favoriteResources.map(res => (
+                          <ResourceCard key={res.id} res={res} />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Recent Section */}
+                  <section>
+                    <h2 className="text-xl font-bold text-black mb-4 border-b border-gray-200 pb-2">
+                      {mainSearch || selectedCategory !== 'all' || selectedTagIds.size > 0 
+                        ? `Search Results (${recentResources.length})` 
+                        : "Recent Resources"}
+                    </h2>
+                    {recentResources.length === 0 ? (
+                      <div className="text-center py-12 bg-white rounded-2xl border border-gray-200 shadow-sm">
+                        <p className="text-gray-500 font-medium">No resources match your search.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        {recentResources.map(res => (
+                          <ResourceCard key={res.id} res={res} />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
+      </main>
+    </div>
+  );
+}
