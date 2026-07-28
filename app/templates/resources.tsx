@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { useRouter } from "next/navigation";
 
 type Resource = {
   id: string;
@@ -32,6 +33,7 @@ type MappedResource = Resource & {
 
 export default function Resources() {
   const supabase = createClient();
+  const router = useRouter();
   
   // Data States
   const [resources, setResources] = useState<MappedResource[]>([]);
@@ -188,6 +190,7 @@ export default function Resources() {
       setSelectedTagIds([]);
       setTagSearch("");
       fetchInitialData();
+      router.refresh();
 
     } catch (err: any) {
       setError(err.message || "An error occurred while saving.");
@@ -231,6 +234,7 @@ export default function Resources() {
 
       setEditingId(null);
       fetchInitialData();
+      router.refresh();
     } catch (err: any) {
        setError(err.message);
     }
@@ -246,6 +250,7 @@ export default function Resources() {
       
       setDeleteConfirmId(null);
       fetchInitialData();
+      router.refresh();
     } catch (err: any) {
       setError(err.message);
     }
