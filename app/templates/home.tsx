@@ -433,7 +433,7 @@ export default function HomeDashboard() {
         
         <nav className="flex-1 px-4 space-y-2 overflow-y-auto">
           <button 
-            onClick={() => { setCurrentView("dashboard"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
+            onClick={() => window.location.reload()}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${
               currentView === "dashboard" ? "bg-white text-[#2570FA] shadow-md" : "text-white hover:bg-white/10"
             }`}
