@@ -26,7 +26,7 @@ export default function LoginForm() {
 
     if (isLogin) {
       // ACTUAL LOGIN LOGIC
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
@@ -39,7 +39,7 @@ export default function LoginForm() {
       }
     } else {
       // ACTUAL REGISTRATION LOGIC
-      const { data, error } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -70,8 +70,8 @@ export default function LoginForm() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        // Force redirect to /templates after Google approves
-        redirectTo: `${window.location.origin}/templates`, 
+        // Exchange the OAuth code on the server before opening the dashboard.
+        redirectTo: `${window.location.origin}/auth/callback?next=/templates`,
       },
     });
 
@@ -217,4 +217,3 @@ export default function LoginForm() {
 
 
 //    test001@gmail.com
-

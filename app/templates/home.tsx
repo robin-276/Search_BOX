@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { createClient } from "@/utils/supabase/client";
 
 // Import your other pages from the same folder
 import CategoryPage from "./Category";
 import TagsPage from "./tags";
 import ResourcesPage from "./resources";
+import NotesPage from "./notes";
 import ProfilePage from "./profile"; 
 
 import { 
   Search, ExternalLink, Star, LayoutDashboard, 
   Tags as TagsIcon, Folder, Database, Globe,
-  Menu, X, User
+  Menu, X, User, NotebookPen
 } from "lucide-react";
 
 // --- Types ---
@@ -33,8 +34,88 @@ type MappedResource = Resource & {
   tags: Tag[];
 };
 
+type Note = {
+  id: string;
+  title: string;
+  description: string | null;
+  content: string;
+  category_id: string | null;
+  created_at: string;
+  favorite: boolean;
+};
+
+type MappedNote = Note & {
+  category_name: string;
+  tags: Tag[];
+};
+
+function DashboardNoteCard({
+  note,
+  onToggleFavorite,
+  onOpenNotes,
+}: {
+  note: MappedNote;
+  onToggleFavorite: (note: MappedNote) => void;
+  onOpenNotes: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-colors hover:border-[#2570FA] hover:shadow-md">
+      <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg border border-blue-100 bg-blue-50">
+        <NotebookPen className="h-6 w-6 text-[#2570FA]" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#2570FA]">
+            Note
+          </span>
+          <span className="truncate text-xs font-medium text-gray-400">
+            {note.category_name}
+          </span>
+        </div>
+        <h3 className="truncate text-lg font-bold text-black">{note.title}</h3>
+        <p className="mt-0.5 truncate text-sm text-gray-600">
+          {note.description || note.content || "No description"}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {note.tags.map((tag) => (
+            <span
+              key={tag.id}
+              className="rounded-full border border-[#2570FA]/20 bg-[#2570FA]/10 px-2 py-0.5 text-[10px] font-medium text-[#2570FA]"
+            >
+              #{tag.name}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col items-center gap-2 pl-2 sm:flex-row">
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(note)}
+          className={`rounded-lg p-2 transition-colors ${
+            note.favorite
+              ? "bg-amber-100 text-amber-500 hover:bg-amber-200"
+              : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+          }`}
+          title={note.favorite ? "Remove from Favorites" : "Add to Favorites"}
+        >
+          <Star className={`h-5 w-5 ${note.favorite ? "fill-current" : ""}`} />
+        </button>
+        <button
+          type="button"
+          onClick={onOpenNotes}
+          className="rounded-lg bg-[#2570FA] px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
+        >
+          Open
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function HomeDashboard() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   // --- State: Navigation (SPA) & Sidebar ---
   const [currentView, setCurrentView] = useState("dashboard");
@@ -43,6 +124,7 @@ export default function HomeDashboard() {
   // --- State: Data & User ---
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [resources, setResources] = useState<MappedResource[]>([]);
+  const [notes, setNotes] = useState<MappedNote[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -72,41 +154,29 @@ export default function HomeDashboard() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // --- Initial Data Fetch ---
-  useEffect(() => {
-    fetchAllData();
-    fetchUser();
-    
-    // Close suggestions when clicking outside
-    const handleClickOutside = (event: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
-        setShowSuggestions(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const fetchUser = async () => {
+  const fetchUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       setUserEmail(user.email ?? "User");
     }
-  };
+  }, [supabase]);
 
-  const fetchAllData = async () => {
+  const fetchAllData = useCallback(async () => {
     setIsLoading(true);
 
-    const [resData, catData, tagData, resTagsData] = await Promise.all([
+    const [resData, notesData, catData, tagData, resTagsData, noteTagsData] = await Promise.all([
       supabase.from("resources").select("*").order("created_at", { ascending: false }),
+      supabase.from("notes").select("*").order("created_at", { ascending: false }),
       supabase.from("categories").select("*"),
       supabase.from("tags").select("*"),
-      supabase.from("resource_tags").select("*")
+      supabase.from("resource_tags").select("*"),
+      supabase.from("note_tags").select("*"),
     ]);
 
     const fetchedCategories = catData.data || [];
     const fetchedTags = tagData.data || [];
     const fetchedResTags = resTagsData.data || [];
+    const fetchedNoteTags = noteTagsData.data || [];
     
     setCategories(fetchedCategories);
     setAllTags(fetchedTags);
@@ -128,8 +198,39 @@ export default function HomeDashboard() {
       });
       setResources(mapped);
     }
+
+    if (notesData.data) {
+      const mappedNotes: MappedNote[] = notesData.data.map((note: Note) => {
+        const category = fetchedCategories.find(c => c.id === note.category_id);
+        const tagIdsForNote = fetchedNoteTags
+          .filter(mapping => mapping.note_id === note.id)
+          .map(mapping => mapping.tag_id);
+
+        return {
+          ...note,
+          category_name: category ? category.name : "Uncategorized",
+          tags: fetchedTags.filter(tag => tagIdsForNote.includes(tag.id)),
+          favorite: note.favorite || false,
+        };
+      });
+      setNotes(mappedNotes);
+    }
     setIsLoading(false);
-  };
+  }, [supabase]);
+
+  // --- Initial Data Fetch ---
+  useEffect(() => {
+    void Promise.resolve().then(() => Promise.all([fetchAllData(), fetchUser()]));
+
+    // Close suggestions when clicking outside
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [fetchAllData, fetchUser]);
 
   // --- Handlers ---
   const toggleFavorite = async (id: string, currentStatus: boolean) => {
@@ -145,6 +246,25 @@ export default function HomeDashboard() {
       alert(`Failed to save favorite: Make sure the "favorite" column exists in Supabase. Error: ${error.message}`);
       // Revert UI if database failed
       setResources(prev => prev.map(r => r.id === id ? { ...r, favorite: currentStatus } : r));
+    }
+  };
+
+  const toggleNoteFavorite = async (note: MappedNote) => {
+    const newStatus = !note.favorite;
+    setNotes(current =>
+      current.map(item => item.id === note.id ? { ...item, favorite: newStatus } : item)
+    );
+
+    const { error } = await supabase
+      .from("notes")
+      .update({ favorite: newStatus })
+      .eq("id", note.id);
+
+    if (error) {
+      setNotes(current =>
+        current.map(item => item.id === note.id ? { ...item, favorite: note.favorite } : item)
+      );
+      alert(`Failed to save note favorite: ${error.message}`);
     }
   };
 
@@ -169,8 +289,14 @@ export default function HomeDashboard() {
         if (t.name.toLowerCase().includes(lowerQuery)) possibleMatches.add(`#${t.name}`);
       });
     });
+    notes.forEach(note => {
+      if (note.title.toLowerCase().includes(lowerQuery)) possibleMatches.add(note.title);
+      note.tags.forEach(tag => {
+        if (tag.name.toLowerCase().includes(lowerQuery)) possibleMatches.add(`#${tag.name}`);
+      });
+    });
     return Array.from(possibleMatches).slice(0, 5);
-  }, [mainSearch, resources]);
+  }, [mainSearch, resources, notes]);
 
   const visibleTags = useMemo(() => {
     if (!tagSearch.trim()) return allTags;
@@ -194,8 +320,32 @@ export default function HomeDashboard() {
     });
   }, [resources, mainSearch, selectedCategory, selectedTagIds]);
 
+  const filteredNotes = useMemo(() => {
+    const normalizedSearch = mainSearch.toLowerCase().replace("#", "");
+    const selectedTagsArray = Array.from(selectedTagIds);
+
+    return notes.filter(note => {
+      const searchMatch =
+        !mainSearch ||
+        note.title.toLowerCase().includes(normalizedSearch) ||
+        (note.description?.toLowerCase().includes(normalizedSearch) ?? false) ||
+        note.content.toLowerCase().includes(normalizedSearch) ||
+        note.tags.some(tag => tag.name.toLowerCase().includes(normalizedSearch));
+
+      const categoryMatch =
+        selectedCategory === "all" || note.category_id === selectedCategory;
+      const tagsMatch =
+        selectedTagsArray.length === 0 ||
+        selectedTagsArray.every(tagId => note.tags.some(tag => tag.id === tagId));
+
+      return searchMatch && categoryMatch && tagsMatch;
+    });
+  }, [notes, mainSearch, selectedCategory, selectedTagIds]);
+
   const favoriteResources = filteredResources.filter(r => r.favorite);
   const recentResources = filteredResources.filter(r => !r.favorite);
+  const favoriteNotes = filteredNotes.filter(note => note.favorite);
+  const recentNotes = filteredNotes.filter(note => !note.favorite);
 
   // --- UI Components ---
   const ResourceCard = ({ res }: { res: MappedResource }) => (
@@ -299,6 +449,15 @@ export default function HomeDashboard() {
           >
             <Database className="w-5 h-5" /> Resources
           </button>
+
+          <button
+            onClick={() => { setCurrentView("notes"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${
+              currentView === "notes" ? "bg-white text-[#2570FA] shadow-md" : "text-white hover:bg-white/10"
+            }`}
+          >
+            <NotebookPen className="w-5 h-5" /> Notes
+          </button>
           
           <button 
             onClick={() => { setCurrentView("categories"); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
@@ -360,6 +519,7 @@ export default function HomeDashboard() {
           {currentView === "categories" && <CategoryPage />}
           {currentView === "tags" && <TagsPage />}
           {currentView === "resources" && <ResourcesPage />}
+          {currentView === "notes" && <NotesPage />}
           {currentView === "profile" && <ProfilePage />} 
 
           {/* DASHBOARD VIEW CONTENT */}
@@ -466,14 +626,22 @@ export default function HomeDashboard() {
                 <div className="space-y-10 pb-12">
                   
                   {/* Favorites Section */}
-                  {favoriteResources.length > 0 && (
+                  {(favoriteResources.length > 0 || favoriteNotes.length > 0) && (
                     <section>
                       <h2 className="text-xl font-bold text-amber-500 flex items-center gap-2 mb-4">
                         <Star className="w-6 h-6 fill-current" /> Favorites
                       </h2>
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                         {favoriteResources.map(res => (
-                          <ResourceCard key={res.id} res={res} />
+                          <ResourceCard key={`resource-${res.id}`} res={res} />
+                        ))}
+                        {favoriteNotes.map(note => (
+                          <DashboardNoteCard
+                            key={`note-${note.id}`}
+                            note={note}
+                            onToggleFavorite={toggleNoteFavorite}
+                            onOpenNotes={() => setCurrentView("notes")}
+                          />
                         ))}
                       </div>
                     </section>
@@ -483,17 +651,45 @@ export default function HomeDashboard() {
                   <section>
                     <h2 className="text-xl font-bold text-black mb-4 border-b border-gray-200 pb-2">
                       {mainSearch || selectedCategory !== 'all' || selectedTagIds.size > 0 
-                        ? `Search Results (${recentResources.length})` 
+                        ? `Resource Results (${recentResources.length})`
                         : "Recent Resources"}
                     </h2>
                     {recentResources.length === 0 ? (
                       <div className="text-center py-12 bg-white rounded-2xl border border-gray-200 shadow-sm">
-                        <p className="text-gray-500 font-medium">No resources match your search.</p>
+                        <p className="text-gray-500 font-medium">No resources match the current filters.</p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                         {recentResources.map(res => (
                           <ResourceCard key={res.id} res={res} />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Notes Section */}
+                  <section>
+                    <h2 className="mb-4 flex items-center gap-2 border-b border-gray-200 pb-2 text-xl font-bold text-black">
+                      <NotebookPen className="h-5 w-5 text-[#2570FA]" />
+                      {mainSearch || selectedCategory !== "all" || selectedTagIds.size > 0
+                        ? `Note Results (${recentNotes.length})`
+                        : "Recent Notes"}
+                    </h2>
+                    {recentNotes.length === 0 ? (
+                      <div className="rounded-2xl border border-gray-200 bg-white py-12 text-center shadow-sm">
+                        <p className="font-medium text-gray-500">
+                          No notes match the current filters.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                        {recentNotes.map(note => (
+                          <DashboardNoteCard
+                            key={note.id}
+                            note={note}
+                            onToggleFavorite={toggleNoteFavorite}
+                            onOpenNotes={() => setCurrentView("notes")}
+                          />
                         ))}
                       </div>
                     )}
