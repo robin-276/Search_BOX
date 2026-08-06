@@ -1,7 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpenText, Check, Pencil, Plus, Star, Trash2, X } from "lucide-react";
+import {
+  BookOpenText,
+  Check,
+  ExternalLink,
+  Link2,
+  Pencil,
+  Plus,
+  Star,
+  Trash2,
+  X,
+} from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 
 type Category = {
@@ -14,6 +24,11 @@ type Tag = {
   name: string;
 };
 
+type NoteLink = {
+  name: string;
+  url: string;
+};
+
 type Note = {
   id: string;
   user_id: string;
@@ -23,11 +38,13 @@ type Note = {
   category_id: string | null;
   favorite: boolean;
   created_at: string;
+  links: unknown;
 };
 
-type NoteWithDetails = Note & {
+type NoteWithDetails = Omit<Note, "links"> & {
   categoryName: string;
   tags: Tag[];
+  links: NoteLink[];
 };
 
 type NoteForm = {
@@ -35,6 +52,7 @@ type NoteForm = {
   description: string;
   content: string;
   category_id: string;
+  links: NoteLink[];
 };
 
 const emptyForm: NoteForm = {
@@ -42,7 +60,62 @@ const emptyForm: NoteForm = {
   description: "",
   content: "",
   category_id: "",
+  links: [{ name: "", url: "" }],
 };
+
+function normalizeLinks(value: unknown): NoteLink[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      !("name" in item) ||
+      !("url" in item) ||
+      typeof item.name !== "string" ||
+      typeof item.url !== "string"
+    ) {
+      return [];
+    }
+
+    const name = item.name.trim();
+    const url = item.url.trim();
+
+    try {
+      const parsedUrl = new URL(url);
+      return name && ["http:", "https:"].includes(parsedUrl.protocol)
+        ? [{ name, url: parsedUrl.toString() }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function prepareLinks(links: NoteLink[]) {
+  return links.flatMap((link, index) => {
+    const name = link.name.trim();
+    const url = link.url.trim();
+
+    if (!name && !url) return [];
+    if (!name || !url) {
+      throw new Error(`Link ${index + 1} needs both a name and a URL.`);
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      throw new Error(`Link ${index + 1} has an invalid URL.`);
+    }
+
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      throw new Error(`Link ${index + 1} must start with http:// or https://.`);
+    }
+
+    return [{ name, url: parsedUrl.toString() }];
+  });
+}
 
 function errorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -106,6 +179,77 @@ function TagPicker({
   );
 }
 
+function LinkFields({
+  links,
+  setLinks,
+  compact = false,
+}: {
+  links: NoteLink[];
+  setLinks: (links: NoteLink[]) => void;
+  compact?: boolean;
+}) {
+  const updateLink = (index: number, field: keyof NoteLink, value: string) => {
+    setLinks(
+      links.map((link, linkIndex) =>
+        linkIndex === index ? { ...link, [field]: value } : link,
+      ),
+    );
+  };
+
+  return (
+    <div className={`rounded-xl border border-gray-200 bg-gray-50 ${compact ? "p-3" : "p-4"}`}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="flex items-center gap-2 text-sm font-bold text-black">
+          <Link2 className="h-4 w-4 text-green-600" />
+          URLs <span className="font-normal text-gray-500">(optional)</span>
+        </p>
+        <button
+          type="button"
+          onClick={() => setLinks([...links, { name: "", url: "" }])}
+          className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-green-700"
+        >
+          <Plus className="h-3.5 w-3.5" /> Add URL
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {links.map((link, index) => (
+          <div
+            key={index}
+            className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto]"
+          >
+            <input
+              value={link.name}
+              onChange={(event) => updateLink(index, "name", event.target.value)}
+              placeholder="Link name"
+              aria-label={`Link ${index + 1} name`}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:ring-2 focus:ring-green-600"
+            />
+            <input
+              type="url"
+              value={link.url}
+              onChange={(event) => updateLink(index, "url", event.target.value)}
+              placeholder="https://..."
+              aria-label={`Link ${index + 1} URL`}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:ring-2 focus:ring-green-600"
+            />
+            {links.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setLinks(links.filter((_, linkIndex) => linkIndex !== index))}
+                aria-label={`Remove link ${index + 1}`}
+                className="rounded-lg p-2 text-red-500 transition-colors hover:bg-red-50 hover:text-red-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function NotesPage() {
   const supabase = useMemo(() => createClient(), []);
   const [notes, setNotes] = useState<NoteWithDetails[]>([]);
@@ -117,6 +261,7 @@ export default function NotesPage() {
   const [editForm, setEditForm] = useState<NoteForm>(emptyForm);
   const [editTagIds, setEditTagIds] = useState<string[]>([]);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [viewingLinksId, setViewingLinksId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +300,7 @@ export default function NotesPage() {
 
       return {
         ...note,
+        links: normalizeLinks(note.links),
         categoryName:
           fetchedCategories.find((category) => category.id === note.category_id)?.name ||
           "Uncategorized",
@@ -197,6 +343,7 @@ export default function NotesPage() {
     setError(null);
 
     try {
+      const links = prepareLinks(form.links);
       const {
         data: { user },
         error: authError,
@@ -212,6 +359,7 @@ export default function NotesPage() {
           description: form.description.trim() || null,
           content: form.content.trim(),
           category_id: form.category_id || null,
+          links,
         })
         .select("id")
         .single();
@@ -233,11 +381,13 @@ export default function NotesPage() {
   const startEditing = (note: NoteWithDetails) => {
     setEditingId(note.id);
     setDeleteId(null);
+    setViewingLinksId(null);
     setEditForm({
       title: note.title,
       description: note.description || "",
       content: note.content,
       category_id: note.category_id || "",
+      links: note.links.length > 0 ? note.links : [{ name: "", url: "" }],
     });
     setEditTagIds(note.tags.map((tag) => tag.id));
   };
@@ -248,6 +398,7 @@ export default function NotesPage() {
     setError(null);
 
     try {
+      const links = prepareLinks(editForm.links);
       const { error: updateError } = await supabase
         .from("notes")
         .update({
@@ -255,6 +406,7 @@ export default function NotesPage() {
           description: editForm.description.trim() || null,
           content: editForm.content.trim(),
           category_id: editForm.category_id || null,
+          links,
         })
         .eq("id", id);
 
@@ -303,6 +455,7 @@ export default function NotesPage() {
     }
 
     setDeleteId(null);
+    setViewingLinksId((current) => (current === id ? null : current));
     setNotes((current) => current.filter((note) => note.id !== id));
   };
 
@@ -369,6 +522,11 @@ export default function NotesPage() {
               className="w-full resize-y rounded-xl border border-gray-300 bg-white px-4 py-3 text-black outline-none focus:ring-2 focus:ring-[#2570FA]"
             />
           </div>
+
+          <LinkFields
+            links={form.links}
+            setLinks={(links) => setForm({ ...form, links })}
+          />
 
           <TagPicker
             tags={tags}
@@ -456,6 +614,11 @@ export default function NotesPage() {
                         </option>
                       ))}
                     </select>
+                    <LinkFields
+                      compact
+                      links={editForm.links}
+                      setLinks={(links) => setEditForm({ ...editForm, links })}
+                    />
                     <TagPicker
                       tags={tags}
                       selectedIds={editTagIds}
@@ -520,6 +683,29 @@ export default function NotesPage() {
                       ))}
                     </div>
 
+                    {viewingLinksId === note.id && note.links.length > 0 && (
+                      <div className="mt-4 space-y-2 rounded-xl border border-blue-100 bg-blue-50 p-3">
+                        {note.links.map((link, index) => (
+                          <div
+                            key={`${link.url}-${index}`}
+                            className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2"
+                          >
+                            <span className="min-w-0 truncate text-sm font-semibold text-gray-800">
+                              {link.name}
+                            </span>
+                            <a
+                              href={link.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex shrink-0 items-center gap-1 rounded-lg bg-[#2570FA] px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-blue-700"
+                            >
+                              Open <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="mt-5 flex items-center justify-between border-t border-gray-100 pt-4">
                       <time className="text-xs text-gray-400">
                         {new Date(note.created_at).toLocaleDateString()}
@@ -544,6 +730,20 @@ export default function NotesPage() {
                         </div>
                       ) : (
                         <div className="flex gap-2">
+                          {note.links.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setViewingLinksId((current) =>
+                                  current === note.id ? null : note.id,
+                                )
+                              }
+                              className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs font-bold text-white hover:bg-green-700"
+                            >
+                              <Link2 className="h-3.5 w-3.5" />
+                              {viewingLinksId === note.id ? "Hide" : "View"}
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => startEditing(note)}

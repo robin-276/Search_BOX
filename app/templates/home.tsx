@@ -34,6 +34,11 @@ type MappedResource = Resource & {
   tags: Tag[];
 };
 
+type NoteLink = {
+  name: string;
+  url: string;
+};
+
 type Note = {
   id: string;
   title: string;
@@ -42,25 +47,56 @@ type Note = {
   category_id: string | null;
   created_at: string;
   favorite: boolean;
+  links: unknown;
 };
 
-type MappedNote = Note & {
+type MappedNote = Omit<Note, "links"> & {
   category_name: string;
   tags: Tag[];
+  links: NoteLink[];
 };
+
+function normalizeNoteLinks(value: unknown): NoteLink[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      !("name" in item) ||
+      !("url" in item) ||
+      typeof item.name !== "string" ||
+      typeof item.url !== "string"
+    ) {
+      return [];
+    }
+
+    const name = item.name.trim();
+    const url = item.url.trim();
+
+    try {
+      const parsedUrl = new URL(url);
+      return name && ["http:", "https:"].includes(parsedUrl.protocol)
+        ? [{ name, url: parsedUrl.toString() }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
 
 function DashboardNoteCard({
   note,
   onToggleFavorite,
-  onOpenNotes,
+  onViewLinks,
 }: {
   note: MappedNote;
   onToggleFavorite: (note: MappedNote) => void;
-  onOpenNotes: () => void;
+  onViewLinks: (note: MappedNote) => void;
 }) {
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-colors hover:border-[#2570FA] hover:shadow-md">
-      <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg border border-blue-100 bg-blue-50">
+    <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-colors hover:border-[#2570FA] hover:shadow-md sm:p-5">
+      <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 sm:h-14 sm:w-14">
         <NotebookPen className="h-6 w-6 text-[#2570FA]" />
       </div>
 
@@ -102,13 +138,15 @@ function DashboardNoteCard({
         >
           <Star className={`h-5 w-5 ${note.favorite ? "fill-current" : ""}`} />
         </button>
-        <button
-          type="button"
-          onClick={onOpenNotes}
-          className="rounded-lg bg-[#2570FA] px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
-        >
-          Open
-        </button>
+        {note.links.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onViewLinks(note)}
+            className="rounded-lg bg-[#2570FA] px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
+          >
+            View
+          </button>
+        )}
       </div>
     </div>
   );
@@ -128,6 +166,7 @@ export default function HomeDashboard() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [viewingNote, setViewingNote] = useState<MappedNote | null>(null);
 
   // --- State: Search & Filters ---
   const [mainSearch, setMainSearch] = useState("");
@@ -208,6 +247,7 @@ export default function HomeDashboard() {
 
         return {
           ...note,
+          links: normalizeNoteLinks(note.links),
           category_name: category ? category.name : "Uncategorized",
           tags: fetchedTags.filter(tag => tagIdsForNote.includes(tag.id)),
           favorite: note.favorite || false,
@@ -304,11 +344,14 @@ export default function HomeDashboard() {
   }, [tagSearch, allTags]);
 
   const filteredResources = useMemo(() => {
+    const normalizedSearch = mainSearch.trim().toLowerCase();
+    const normalizedTagSearch = normalizedSearch.replace("#", "");
+
     return resources.filter(res => {
-      const searchMatch = !mainSearch || 
-        res.title.toLowerCase().includes(mainSearch.toLowerCase()) ||
-        (res.description && res.description.toLowerCase().includes(mainSearch.toLowerCase())) ||
-        res.tags.some(t => t.name.toLowerCase().includes(mainSearch.toLowerCase().replace("#", "")));
+      const searchMatch = !normalizedSearch ||
+        res.title.toLowerCase().includes(normalizedSearch) ||
+        (res.description && res.description.toLowerCase().includes(normalizedSearch)) ||
+        res.tags.some(t => t.name.toLowerCase().includes(normalizedTagSearch));
 
       const categoryMatch = selectedCategory === "all" || res.category_id === selectedCategory;
 
@@ -321,12 +364,12 @@ export default function HomeDashboard() {
   }, [resources, mainSearch, selectedCategory, selectedTagIds]);
 
   const filteredNotes = useMemo(() => {
-    const normalizedSearch = mainSearch.toLowerCase().replace("#", "");
+    const normalizedSearch = mainSearch.trim().toLowerCase().replace("#", "");
     const selectedTagsArray = Array.from(selectedTagIds);
 
     return notes.filter(note => {
       const searchMatch =
-        !mainSearch ||
+        !normalizedSearch ||
         note.title.toLowerCase().includes(normalizedSearch) ||
         (note.description?.toLowerCase().includes(normalizedSearch) ?? false) ||
         note.content.toLowerCase().includes(normalizedSearch) ||
@@ -346,13 +389,16 @@ export default function HomeDashboard() {
   const recentResources = filteredResources.filter(r => !r.favorite);
   const favoriteNotes = filteredNotes.filter(note => note.favorite);
   const recentNotes = filteredNotes.filter(note => !note.favorite);
+  const hasTextSearch = mainSearch.trim().length > 0;
+  const hasStructuredFilters = selectedCategory !== "all" || selectedTagIds.size > 0;
+  const hasAnyFilteredResults = filteredResources.length > 0 || filteredNotes.length > 0;
 
   // --- UI Components ---
   const ResourceCard = ({ res }: { res: MappedResource }) => (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-4 hover:border-[#2570FA] transition-colors shadow-sm hover:shadow-md group">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 flex items-center gap-4 hover:border-[#2570FA] transition-colors shadow-sm hover:shadow-md group">
       
       {/* Logo Area */}
-      <div className="w-12 h-12 rounded-lg bg-gray-100 flex-shrink-0 flex items-center justify-center overflow-hidden border border-gray-200">
+      <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-gray-100 flex-shrink-0 flex items-center justify-center overflow-hidden border border-gray-200">
         {res.logo ? (
           <img src={res.logo} alt={res.title} className="w-full h-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
         ) : (
@@ -405,6 +451,54 @@ export default function HomeDashboard() {
 
   return (
     <div className="flex h-screen bg-[#FFFFFF] text-black overflow-hidden font-sans">
+      {viewingNote && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setViewingNote(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="note-links-title"
+            onClick={(event) => event.stopPropagation()}
+            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl sm:p-6"
+          >
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="mb-1 text-xs font-bold uppercase tracking-wide text-[#2570FA]">
+                  Note URLs
+                </p>
+                <h2 id="note-links-title" className="truncate text-xl font-bold text-black">
+                  {viewingNote.title}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingNote(null)}
+                aria-label="Close URL popup"
+                className="shrink-0 rounded-lg bg-gray-100 p-2 text-gray-600 transition-colors hover:bg-gray-200 hover:text-black"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {viewingNote.links.map((link, index) => (
+                <a
+                  key={`${link.url}-${index}`}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex min-w-0 items-center justify-between gap-2 rounded-xl bg-green-600 px-4 py-3 font-bold text-white shadow-sm transition-colors hover:bg-green-700"
+                >
+                  <span className="truncate">{link.name}</span>
+                  <ExternalLink className="h-4 w-4 shrink-0" />
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* MOBILE OVERLAY */}
       {isSidebarOpen && (
@@ -500,7 +594,7 @@ export default function HomeDashboard() {
       </aside>
 
       {/* 2. MAIN DASHBOARD CONTENT */}
-      <main className="flex-1 flex flex-col h-full overflow-y-auto bg-gray-50">
+      <main className="flex-1 min-w-0 flex flex-col h-full overflow-y-auto bg-gray-50">
         
         {/* TOP BAR WITH 3-BAR BUTTON */}
         <div className="flex items-center bg-white border-b border-gray-200 text-black p-4 shadow-sm">
@@ -513,7 +607,7 @@ export default function HomeDashboard() {
           <h1 className="text-xl font-bold capitalize">{currentView}</h1>
         </div>
 
-        <div className="p-6 md:p-8 max-w-7xl mx-auto w-full space-y-8">
+        <div className="w-full space-y-6 p-4 sm:p-6 lg:space-y-8 lg:p-8">
 
           {/* Conditional Rendering of Views */}
           {currentView === "categories" && <CategoryPage />}
@@ -622,79 +716,126 @@ export default function HomeDashboard() {
               {/* --- RESULTS DISPLAY --- */}
               {isLoading ? (
                 <div className="text-center text-gray-500 py-12 font-medium">Loading your library...</div>
+              ) : hasTextSearch ? (
+                <div className="space-y-10 pb-12">
+                  {!hasAnyFilteredResults && (
+                    <div className="rounded-2xl border border-gray-200 bg-white py-12 text-center shadow-sm">
+                      <p className="font-medium text-gray-500">
+                        No results found for “{mainSearch.trim()}”.
+                      </p>
+                    </div>
+                  )}
+
+                  {filteredResources.length > 0 && (
+                    <section>
+                      <h2 className="mb-4 border-b border-gray-200 pb-2 text-xl font-bold text-black">
+                        Resource Results ({filteredResources.length})
+                      </h2>
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                        {filteredResources.map(resource => (
+                          <ResourceCard key={resource.id} res={resource} />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {filteredNotes.length > 0 && (
+                    <section>
+                      <h2 className="mb-4 flex items-center gap-2 border-b border-gray-200 pb-2 text-xl font-bold text-black">
+                        <NotebookPen className="h-5 w-5 text-[#2570FA]" />
+                        Note Results ({filteredNotes.length})
+                      </h2>
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                        {filteredNotes.map(note => (
+                          <DashboardNoteCard
+                            key={note.id}
+                            note={note}
+                            onToggleFavorite={toggleNoteFavorite}
+                            onViewLinks={setViewingNote}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                </div>
               ) : (
                 <div className="space-y-10 pb-12">
-                  
-                  {/* Favorites Section */}
+                  {hasStructuredFilters && !hasAnyFilteredResults && (
+                    <div className="rounded-2xl border border-gray-200 bg-white py-12 text-center shadow-sm">
+                      <p className="font-medium text-gray-500">
+                        No resources or notes match the selected filters.
+                      </p>
+                    </div>
+                  )}
+
                   {(favoriteResources.length > 0 || favoriteNotes.length > 0) && (
                     <section>
-                      <h2 className="text-xl font-bold text-amber-500 flex items-center gap-2 mb-4">
-                        <Star className="w-6 h-6 fill-current" /> Favorites
+                      <h2 className="mb-4 flex items-center gap-2 text-xl font-bold text-amber-500">
+                        <Star className="h-6 w-6 fill-current" /> Favorites
                       </h2>
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                        {favoriteResources.map(res => (
-                          <ResourceCard key={`resource-${res.id}`} res={res} />
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                        {favoriteResources.map(resource => (
+                          <ResourceCard key={`resource-${resource.id}`} res={resource} />
                         ))}
                         {favoriteNotes.map(note => (
                           <DashboardNoteCard
                             key={`note-${note.id}`}
                             note={note}
                             onToggleFavorite={toggleNoteFavorite}
-                            onOpenNotes={() => setCurrentView("notes")}
+                            onViewLinks={setViewingNote}
                           />
                         ))}
                       </div>
                     </section>
                   )}
 
-                  {/* Recent Section */}
-                  <section>
-                    <h2 className="text-xl font-bold text-black mb-4 border-b border-gray-200 pb-2">
-                      {mainSearch || selectedCategory !== 'all' || selectedTagIds.size > 0 
-                        ? `Resource Results (${recentResources.length})`
-                        : "Recent Resources"}
-                    </h2>
-                    {recentResources.length === 0 ? (
-                      <div className="text-center py-12 bg-white rounded-2xl border border-gray-200 shadow-sm">
-                        <p className="text-gray-500 font-medium">No resources match the current filters.</p>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                        {recentResources.map(res => (
-                          <ResourceCard key={res.id} res={res} />
-                        ))}
-                      </div>
-                    )}
-                  </section>
+                  {(recentResources.length > 0 || !hasStructuredFilters) && (
+                    <section>
+                      <h2 className="mb-4 border-b border-gray-200 pb-2 text-xl font-bold text-black">
+                        {hasStructuredFilters
+                          ? `Resource Results (${recentResources.length})`
+                          : "Recent Resources"}
+                      </h2>
+                      {recentResources.length === 0 ? (
+                        <div className="rounded-2xl border border-gray-200 bg-white py-12 text-center shadow-sm">
+                          <p className="font-medium text-gray-500">No resources available.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                          {recentResources.map(resource => (
+                            <ResourceCard key={resource.id} res={resource} />
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  )}
 
-                  {/* Notes Section */}
-                  <section>
-                    <h2 className="mb-4 flex items-center gap-2 border-b border-gray-200 pb-2 text-xl font-bold text-black">
-                      <NotebookPen className="h-5 w-5 text-[#2570FA]" />
-                      {mainSearch || selectedCategory !== "all" || selectedTagIds.size > 0
-                        ? `Note Results (${recentNotes.length})`
-                        : "Recent Notes"}
-                    </h2>
-                    {recentNotes.length === 0 ? (
-                      <div className="rounded-2xl border border-gray-200 bg-white py-12 text-center shadow-sm">
-                        <p className="font-medium text-gray-500">
-                          No notes match the current filters.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                        {recentNotes.map(note => (
-                          <DashboardNoteCard
-                            key={note.id}
-                            note={note}
-                            onToggleFavorite={toggleNoteFavorite}
-                            onOpenNotes={() => setCurrentView("notes")}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </section>
-
+                  {(recentNotes.length > 0 || !hasStructuredFilters) && (
+                    <section>
+                      <h2 className="mb-4 flex items-center gap-2 border-b border-gray-200 pb-2 text-xl font-bold text-black">
+                        <NotebookPen className="h-5 w-5 text-[#2570FA]" />
+                        {hasStructuredFilters
+                          ? `Note Results (${recentNotes.length})`
+                          : "Recent Notes"}
+                      </h2>
+                      {recentNotes.length === 0 ? (
+                        <div className="rounded-2xl border border-gray-200 bg-white py-12 text-center shadow-sm">
+                          <p className="font-medium text-gray-500">No notes available.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                          {recentNotes.map(note => (
+                            <DashboardNoteCard
+                              key={note.id}
+                              note={note}
+                              onToggleFavorite={toggleNoteFavorite}
+                              onViewLinks={setViewingNote}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  )}
                 </div>
               )}
             </div>
