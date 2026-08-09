@@ -13,7 +13,7 @@ import ProfilePage from "./profile";
 import { 
   Search, ExternalLink, Star, LayoutDashboard, 
   Tags as TagsIcon, Folder, Database, Globe,
-  Menu, X, User, NotebookPen
+  Menu, X, User, NotebookPen, Copy, Check
 } from "lucide-react";
 
 // --- Types ---
@@ -138,15 +138,13 @@ function DashboardNoteCard({
         >
           <Star className={`h-5 w-5 ${note.favorite ? "fill-current" : ""}`} />
         </button>
-        {note.links.length > 0 && (
-          <button
-            type="button"
-            onClick={() => onViewLinks(note)}
-            className="rounded-lg bg-[#2570FA] px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
-          >
-            View
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => onViewLinks(note)}
+          className="rounded-lg bg-[#2570FA] px-4 py-2 font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
+        >
+          View
+        </button>
       </div>
     </div>
   );
@@ -167,6 +165,7 @@ export default function HomeDashboard() {
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [viewingNote, setViewingNote] = useState<MappedNote | null>(null);
+  const [copiedNoteId, setCopiedNoteId] = useState<string | null>(null);
 
   // --- State: Search & Filters ---
   const [mainSearch, setMainSearch] = useState("");
@@ -305,6 +304,16 @@ export default function HomeDashboard() {
         current.map(item => item.id === note.id ? { ...item, favorite: note.favorite } : item)
       );
       alert(`Failed to save note favorite: ${error.message}`);
+    }
+  };
+
+  const copyNoteContent = async (note: MappedNote) => {
+    try {
+      await navigator.clipboard.writeText(note.content);
+      setCopiedNoteId(note.id);
+      window.setTimeout(() => setCopiedNoteId(null), 2000);
+    } catch {
+      alert("Unable to copy the note. Please try again.");
     }
   };
 
@@ -459,43 +468,75 @@ export default function HomeDashboard() {
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="note-links-title"
+            aria-labelledby="note-view-title"
             onClick={(event) => event.stopPropagation()}
-            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl sm:p-6"
+            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl sm:p-6"
           >
             <div className="mb-5 flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="mb-1 text-xs font-bold uppercase tracking-wide text-[#2570FA]">
-                  Note URLs
+                  Note
                 </p>
-                <h2 id="note-links-title" className="truncate text-xl font-bold text-black">
+                <h2 id="note-view-title" className="break-words text-xl font-bold text-black">
                   {viewingNote.title}
                 </h2>
               </div>
               <button
                 type="button"
                 onClick={() => setViewingNote(null)}
-                aria-label="Close URL popup"
+                aria-label="Close note popup"
                 className="shrink-0 rounded-lg bg-gray-100 p-2 text-gray-600 transition-colors hover:bg-gray-200 hover:text-black"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {viewingNote.links.map((link, index) => (
-                <a
-                  key={`${link.url}-${index}`}
-                  href={link.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex min-w-0 items-center justify-between gap-2 rounded-xl bg-green-600 px-4 py-3 font-bold text-white shadow-sm transition-colors hover:bg-green-700"
+            {viewingNote.description && (
+              <p className="mb-5 break-words text-sm leading-6 text-gray-600">
+                {viewingNote.description}
+              </p>
+            )}
+
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 sm:p-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="font-bold text-black">Note</h3>
+                <button
+                  type="button"
+                  onClick={() => void copyNoteContent(viewingNote)}
+                  className="flex shrink-0 items-center gap-2 rounded-lg bg-[#2570FA] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
                 >
-                  <span className="truncate">{link.name}</span>
-                  <ExternalLink className="h-4 w-4 shrink-0" />
-                </a>
-              ))}
+                  {copiedNoteId === viewingNote.id ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                  {copiedNoteId === viewingNote.id ? "Copied" : "Copy Note"}
+                </button>
+              </div>
+              <p className="whitespace-pre-wrap break-words text-sm leading-6 text-gray-800">
+                {viewingNote.content}
+              </p>
             </div>
+
+            {viewingNote.links.length > 0 && (
+              <div className="mt-5 border-t border-gray-200 pt-5">
+                <h3 className="mb-3 font-bold text-black">Links</h3>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {viewingNote.links.map((link, index) => (
+                    <a
+                      key={`${link.url}-${index}`}
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex min-w-0 items-center justify-between gap-2 rounded-xl bg-green-600 px-4 py-3 font-bold text-white shadow-sm transition-colors hover:bg-green-700"
+                    >
+                      <span className="truncate">{link.name}</span>
+                      <ExternalLink className="h-4 w-4 shrink-0" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
