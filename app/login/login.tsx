@@ -1,9 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
+
+type PreviousLogin = {
+  email: string;
+  provider: "google" | "email";
+};
+
+const PREVIOUS_LOGIN_KEY = "searchbox.previousLogin";
+
+function rememberLogin(login: PreviousLogin) {
+  try {
+    window.localStorage.setItem(PREVIOUS_LOGIN_KEY, JSON.stringify(login));
+  } catch {
+    // Browser storage is optional and must never block authentication.
+  }
+}
 
 export default function LoginForm() {
   const router = useRouter();
@@ -17,6 +32,32 @@ export default function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [previousLogin, setPreviousLogin] = useState<PreviousLogin | null>(null);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        const savedLogin = window.localStorage.getItem(PREVIOUS_LOGIN_KEY);
+        if (!savedLogin) return;
+
+        const parsedLogin = JSON.parse(savedLogin) as Partial<PreviousLogin>;
+        if (
+          typeof parsedLogin.email === "string" &&
+          (parsedLogin.provider === "google" || parsedLogin.provider === "email")
+        ) {
+          const rememberedLogin = parsedLogin as PreviousLogin;
+          setPreviousLogin(rememberedLogin);
+          if (rememberedLogin.provider === "email") {
+            setEmail(rememberedLogin.email);
+          }
+        }
+      } catch {
+        // Ignore invalid browser storage and keep the login form usable.
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +75,9 @@ export default function LoginForm() {
       if (error) {
         setError(error.message);
       } else {
+        const rememberedLogin: PreviousLogin = { email, provider: "email" };
+        rememberLogin(rememberedLogin);
+        setPreviousLogin(rememberedLogin);
         // Successful login, force route to /templates
         router.push("/templates");
       }
@@ -102,6 +146,12 @@ export default function LoginForm() {
         <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/50 rounded-lg text-emerald-400 text-sm text-center">
           {successMsg}
         </div>
+      )}
+
+      {isLogin && previousLogin?.provider === "google" && (
+        <p className="mb-3 text-center text-sm text-slate-300">
+          Previously signed in with Google: {previousLogin.email}
+        </p>
       )}
 
       <button 

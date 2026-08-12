@@ -195,7 +195,20 @@ export default function HomeDashboard() {
   const fetchUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      setUserEmail(user.email ?? "User");
+      const email = user.email ?? "User";
+      setUserEmail(email);
+
+      if (user.email) {
+        const provider = user.app_metadata.provider === "google" ? "google" : "email";
+        try {
+          window.localStorage.setItem(
+            "searchbox.previousLogin",
+            JSON.stringify({ email: user.email, provider }),
+          );
+        } catch {
+          // Browser storage is optional and must never block dashboard loading.
+        }
+      }
     }
   }, [supabase]);
 
