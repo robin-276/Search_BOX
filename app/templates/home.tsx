@@ -404,7 +404,7 @@ export default function HomeDashboard() {
 
   // --- UI Components ---
   const ResourceCard = ({ res }: { res: MappedResource }) => (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5 flex items-center gap-4 hover:border-[#2570FA] transition-colors shadow-sm hover:shadow-md group">
+    <div className="group flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-[transform,box-shadow,border-color] duration-200 ease-out hover:border-[#2570FA] pointer-fine:hover:-translate-y-1 pointer-fine:hover:shadow-lg pointer-coarse:active:scale-[0.98] sm:p-5">
       
       {/* Logo Area */}
       <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-gray-100 flex-shrink-0 flex items-center justify-center overflow-hidden border border-gray-200">
