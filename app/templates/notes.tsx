@@ -665,7 +665,7 @@ export default function NotesPage() {
                       </button>
                     </div>
 
-                    <div className="my-4 whitespace-pre-wrap rounded-xl bg-gray-50 p-4 text-sm leading-6 text-gray-800">
+                    <div className="my-4 h-64 overflow-y-auto overscroll-y-auto whitespace-pre-wrap rounded-xl bg-gray-50 p-4 text-sm leading-6 text-gray-800">
                       {note.content}
                     </div>
 
